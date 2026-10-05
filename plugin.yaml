@@ -22,7 +22,7 @@ config_schema:
     description: "Filled in by `hermes agent-looker login`. Paste a token here only if you created one by hand."
   mcp_url:
     type: str
-    default: "https://api-staging.agentlooker.ai/mcp"
+    default: "https://api.agentlooker.ai/mcp"
     label: "MCP endpoint"
     description: "Agent Looker MCP endpoint. The AGENT_LOOKER_MCP_URL environment variable overrides this."
   check_urls:
