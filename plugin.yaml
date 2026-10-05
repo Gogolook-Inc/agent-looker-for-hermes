@@ -1,0 +1,53 @@
+name: agent-looker
+version: "0.1.0"
+description: "Agent Looker safety guardrails for Hermes: checks every URL before web_extract / browser_navigate opens it, scans web_extract and web_search results for prompt injection and unsafe content, ships the four Agent Looker skills, and adds `hermes agent-looker login` for device-flow sign-in."
+author: "Gogolook"
+license: GPL-3.0
+homepage: https://agentlooker.ai/
+tags: [security, safety, url-safety, prompt-injection, content-moderation]
+
+provides_hooks:
+  - pre_tool_call
+  - transform_tool_result
+  - on_session_start
+
+# Settings live under plugins.entries.agent-looker.settings.<key> in config.yaml and render as a
+# form in Desktop (Capabilities -> Plugins). The token is a secret: it is stored in ~/.hermes/.env
+# under AGENT_LOOKER_API_TOKEN, never in config.yaml. `hermes agent-looker login` fills it in.
+config_schema:
+  api_token:
+    type: secret
+    env: AGENT_LOOKER_API_TOKEN
+    label: "API token"
+    description: "Filled in by `hermes agent-looker login`. Paste a token here only if you created one by hand."
+  mcp_url:
+    type: str
+    default: "https://api-staging.agentlooker.ai/mcp"
+    label: "MCP endpoint"
+    description: "Agent Looker MCP endpoint. The AGENT_LOOKER_MCP_URL environment variable overrides this."
+  check_urls:
+    type: bool
+    default: true
+    label: "Check URLs before web_extract / browser_navigate"
+  check_text:
+    type: bool
+    default: true
+    label: "Scan web_extract / web_search results"
+  block_when_unauthenticated:
+    type: bool
+    default: true
+    label: "Block web tools until signed in"
+    description: "When no token is configured, refuse web_extract / browser_navigate and tell the model how to sign in. Off = warn once and allow."
+  fail_closed:
+    type: bool
+    default: false
+    label: "Block web tools when Agent Looker is unreachable"
+    description: "On API errors or timeouts, block the tool call instead of allowing it with a warning."
+  timeout_seconds:
+    type: int
+    default: 10
+    label: "API timeout (seconds)"
+  max_text_chars:
+    type: int
+    default: 20000
+    label: "Max characters sent to check_text_safety"

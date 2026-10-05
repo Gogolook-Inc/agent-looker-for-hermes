@@ -1,0 +1,76 @@
+# Keeps the MCP URL pinned to the API of the branch it lives on.
+#
+# Branch == environment for this plugin, same as agent-looker-for-AgentPlugins and
+# agent-looker-claude-cowork. The production default URL lives in two files
+# (config.py DEFAULT_MCP_URL and plugin.yaml config_schema.mcp_url.default), so merging
+# develop -> staging -> production would otherwise carry the wrong URL upward.
+#
+# Hermes installs a plugin from the repository's default branch or from one immutable commit
+# (`hermes plugins install owner/repo --ref <40-char sha>`); branch and tag names are refused.
+# Testers therefore install the head commit of staging / develop, and this workflow makes sure
+# that commit carries the matching URL.
+#
+#   pull_request  -> check only: fail if any file does not match the target branch
+#   push          -> auto-fix: rewrite the URL in those files and commit if it drifted
+name: Pin MCP URL to branch environment
+
+on:
+  pull_request:
+    branches: [develop, staging, production]
+  push:
+    branches: [develop, staging, production]
+
+permissions:
+  contents: write
+
+env:
+  URL_FILES: config.py plugin.yaml
+
+jobs:
+  mcp-url:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full ref so we can push the fix back on the push event.
+          ref: ${{ github.event_name == 'push' && github.ref_name || '' }}
+
+      - name: Resolve expected URL for this branch
+        id: expect
+        run: |
+          case "${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}" in
+            production) url="https://api.agentlooker.ai/mcp" ;;
+            staging)    url="https://api-staging.agentlooker.ai/mcp" ;;
+            develop)    url="https://api-develop.agentlooker.ai/mcp" ;;
+            *) echo "unknown branch"; exit 1 ;;
+          esac
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Check every file that carries the URL
+        id: check
+        env:
+          EXPECTED: ${{ steps.expect.outputs.url }}
+        run: |
+          drift=0
+          for f in $URL_FILES; do
+            found="$(grep -o 'https://api[a-z.-]*\.agentlooker\.ai/mcp' "$f" | sort -u)"
+            if [ "$found" != "$EXPECTED" ]; then
+              echo "::error file=$f::url must be $EXPECTED on this branch (found: ${found:-none})"
+              drift=1
+            fi
+          done
+          echo "drift=$drift" >> "$GITHUB_OUTPUT"
+          if [ "$drift" = 1 ] && [ "${{ github.event_name }}" = pull_request ]; then exit 1; fi
+          [ "$drift" = 0 ] && echo "ok: $EXPECTED" || true
+
+      - name: Rewrite and commit the fix
+        if: github.event_name == 'push' && steps.check.outputs.drift == '1'
+        env:
+          EXPECTED: ${{ steps.expect.outputs.url }}
+        run: |
+          perl -pi -e 's|https://api[a-z.-]*\.agentlooker\.ai/mcp|$ENV{EXPECTED}|g' $URL_FILES
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $URL_FILES
+          git commit -m "chore: pin MCP URL to ${{ github.ref_name }} API [skip ci]"
+          git push
