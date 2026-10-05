@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local secrets / state (tokens live in ~/.hermes/.env, never here)
+.env
+.env.*
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
