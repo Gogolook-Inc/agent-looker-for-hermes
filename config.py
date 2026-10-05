@@ -15,7 +15,7 @@ from typing import Any, Optional
 PLUGIN_NAME = "agent-looker"
 PLUGIN_ROOT = Path(__file__).resolve().parent
 
-DEFAULT_MCP_URL = "https://api-develop.agentlooker.ai/mcp"
+DEFAULT_MCP_URL = "https://api-staging.agentlooker.ai/mcp"
 DEFAULT_DASHBOARD_URL = "https://app.agentlooker.ai/dashboard"
 
 ENV_MCP_URL = "AGENT_LOOKER_MCP_URL"
