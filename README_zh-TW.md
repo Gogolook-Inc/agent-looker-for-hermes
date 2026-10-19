@@ -28,8 +28,9 @@
 ```
 web_extract(urls) / browser_navigate(url)
       |
-pre_tool_call ── check_url_safety ──UNSAFE──> 擋下，威脅類別回給模型
-      |                            ──SAFE────> 工具執行
+pre_tool_call ── check_url_safety ──UNSAFE───> 擋下，威脅類別與原因回給模型
+      |                            ──UNKNOWN──> 自動完整分析（10–25 秒）後再判 UNSAFE / SAFE
+      |                            ──SAFE─────> 工具執行
       v
 transform_tool_result ── check_text_safety ──FLAG/BLOCK──> 結果前加警告
                                            ──ALLOW───────> 結果不變
@@ -100,6 +101,7 @@ plugin 的設定表單（Capabilities → Plugins → 齒輪）會顯示 endpoin
 |---|---|---|
 | `mcp_url` | `https://api.agentlooker.ai/mcp` | endpoint。`AGENT_LOOKER_MCP_URL` 會覆寫它。 |
 | `check_urls` | `true` | `web_extract` / `browser_navigate` 前的 URL 檢查 |
+| `url_auto_deep_scan` | `true` | URL 不在信任快取（UNKNOWN）時自動做完整分析（10–25 秒）。關閉 = 擋下該次呼叫並告訴模型可自行要求 `deep_scan` |
 | `check_text` | `true` | `web_extract` / `web_search` 結果的內容掃描 |
 | `block_when_unauthenticated` | `true` | 未登入時拒絕網頁工具（關掉 = 警告一次後放行） |
 | `fail_closed` | `false` | Agent Looker 連不上時擋下網頁工具（預設：放行並在 log 警告） |

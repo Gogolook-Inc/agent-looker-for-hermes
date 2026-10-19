@@ -116,15 +116,45 @@ def _first_text(result: Dict[str, Any]) -> str:
 
 # ---- typed wrappers -------------------------------------------------------------------------------
 
-def check_url_safety(url: str, **kw) -> Dict[str, Any]:
-    """Returns ``{"unsafe": bool, "threats": [str, ...]}`` normalised from ``{isSafe, threats}``."""
-    data = call_tool("check_url_safety", {"url": url}, **kw)
+def check_url_safety(url: str, *, deep_scan: bool = False, **kw) -> Dict[str, Any]:
+    """Normalised verdict for one URL.
+
+    Returns ``{"status", "unsafe", "threats", "trust_score", "reasons"}``:
+
+    * ``status`` -- ``analyzed`` (verdict available), ``not_analyzed`` (not in the trust cache;
+      only a ``deep_scan=True`` call produces a verdict, and it takes 10-25 s) or ``no_data``.
+      Older backends send no ``status``; that is treated as ``analyzed``.
+    * ``unsafe`` -- ``isSafe is False``. ``None`` (not analyzed) is *not* unsafe; the hook
+      decides what to do with ``status``.
+    * ``threats`` -- threat type strings (old ``{threatType}`` objects are flattened).
+    * ``trust_score`` -- 0-100 or ``None``; ``reasons`` -- up to five provider explanations.
+    """
+    arguments: Dict[str, Any] = {"url": url}
+    if deep_scan:
+        arguments["deep_scan"] = True
+    data = call_tool("check_url_safety", arguments, **kw)
     if "isSafe" not in data:
         raise AgentLookerError("check_url_safety returned an unexpected payload")
     threats = []
     for threat in data.get("threats") or []:
-        threats.append(threat if isinstance(threat, str) else str(threat.get("threatType") or threat))
-    return {"unsafe": not data["isSafe"], "threats": threats or (["UNSAFE"] if not data["isSafe"] else [])}
+        if isinstance(threat, str):
+            threats.append(threat)
+        elif isinstance(threat, dict) and threat.get("threatType"):
+            threats.append(str(threat["threatType"]))
+    status = data.get("status")
+    if status not in ("analyzed", "not_analyzed", "no_data"):
+        status = "analyzed"
+    unsafe = data["isSafe"] is False
+    score = data.get("trustScore")
+    trust_score = score if isinstance(score, (int, float)) and not isinstance(score, bool) else None
+    reasons = [str(r) for r in (data.get("reasons") or []) if isinstance(r, str) and r][:5]
+    return {
+        "status": status,
+        "unsafe": unsafe,
+        "threats": threats or (["UNSAFE"] if unsafe else []),
+        "trust_score": trust_score,
+        "reasons": reasons,
+    }
 
 
 def check_text_safety(text: str, source: str, content_source: str, **kw) -> Dict[str, Any]:

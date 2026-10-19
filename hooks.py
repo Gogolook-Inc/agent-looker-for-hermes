@@ -1,7 +1,10 @@
 """Hook callbacks: URL gate before web tools, content scan after them, sign-in reminder at session start.
 
 * ``pre_tool_call``  -> ``web_extract`` (``urls``), ``browser_navigate`` (``url``): every URL goes
-  through ``check_url_safety``; any unsafe URL blocks the call with the threat categories.
+  through ``check_url_safety``; any unsafe URL blocks the call with the threat categories and the
+  provider's first reason. A URL that is not in the trust cache yet (``UNKNOWN``) is analysed in
+  full automatically when ``url_auto_deep_scan`` is on (default; takes 10-25 s); when it is off the
+  call is blocked with a message telling the model how to request the deep scan itself.
 * ``transform_tool_result`` -> ``web_extract`` / ``web_search``: the result text goes through
   ``check_text_safety``; FLAG / BLOCK prepend a warning block the model sees before the content.
 * ``on_session_start`` -> one-line reminder when no token is configured.
@@ -19,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 URL_TOOLS: Dict[str, str] = {"web_extract": "urls", "browser_navigate": "url"}
 TEXT_TOOLS = ("web_extract", "web_search")
+
+# A full analysis polls the provider for up to ~25 s; the default per-request timeout (10 s) would
+# always expire first, so deep-scan calls get at least this much.
+DEEP_SCAN_TIMEOUT_SECONDS = 35.0
+DEEP_SCAN_SECONDS = "10-25 seconds"
 
 LOGIN_HINT = ("Agent Looker is enabled but not signed in. Run `hermes agent-looker login` "
               "(or `/agent-looker login` in a chat session) and retry.")
@@ -42,6 +50,30 @@ def _block(message: str) -> Dict[str, str]:
     return {"action": "block", "message": message}
 
 
+def _deep_scan_timeout() -> float:
+    try:
+        configured = float(config.setting("timeout_seconds") or 10)
+    except (TypeError, ValueError):
+        configured = 10.0
+    return max(configured, DEEP_SCAN_TIMEOUT_SECONDS)
+
+
+def _unknown_message(url: str) -> str:
+    return (f"Agent Looker: {url} is not analyzed yet (UNKNOWN - not in the trust cache). If you really need "
+            f"it, call check_url_safety with deep_scan=true (slow, {DEEP_SCAN_SECONDS}) and retry; otherwise "
+            "treat it as unverified and do not open it.")
+
+
+def _describe_unsafe(url: str, verdict: Dict[str, Any]) -> str:
+    text = f"{url} [{', '.join(verdict['threats'])}]"
+    reasons = verdict.get("reasons") or []
+    if reasons:
+        text += f" - {reasons[0]}"
+    if verdict.get("trust_score") is not None:
+        text += f" (trust score {verdict['trust_score']}/100)"
+    return text
+
+
 def pre_tool_call(tool_name: str, args: Any = None, task_id: str = "", **kwargs) -> Optional[Dict[str, str]]:
     global _warned_unauthenticated, _warned_error
     if tool_name not in URL_TOOLS or not config.setting("check_urls"):
@@ -60,6 +92,10 @@ def pre_tool_call(tool_name: str, args: Any = None, task_id: str = "", **kwargs)
     for url in urls:
         try:
             verdict = mcp_client.check_url_safety(url)
+            if verdict["status"] == "not_analyzed":
+                if not config.setting("url_auto_deep_scan"):
+                    return _block(_unknown_message(url))
+                verdict = mcp_client.check_url_safety(url, deep_scan=True, timeout=_deep_scan_timeout())
         except mcp_client.AuthError as exc:
             return _block(f"Agent Looker rejected the stored token ({exc}). {LOGIN_HINT}")
         except Exception as exc:  # transport / protocol
@@ -70,7 +106,7 @@ def pre_tool_call(tool_name: str, args: Any = None, task_id: str = "", **kwargs)
                 logger.warning("agent-looker: check_url_safety failed, allowing %s: %s", tool_name, exc)
             continue
         if verdict["unsafe"]:
-            unsafe.append(f"{url} [{', '.join(verdict['threats'])}]")
+            unsafe.append(_describe_unsafe(url, verdict))
     if unsafe:
         return _block("Agent Looker blocked unsafe URL(s): " + "; ".join(unsafe)
                       + ". Do not open them; tell the user which threat categories were detected.")
