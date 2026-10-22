@@ -41,7 +41,7 @@ class CheckUrlSafetyNormalisation(unittest.TestCase):
 
     def test_old_backend_shape_is_analyzed(self):
         result, call = self.call({"url": "u", "isSafe": False, "threats": ["MALWARE"]})
-        self.assertEqual(result, {"status": "analyzed", "unsafe": True, "threats": ["MALWARE"], "trust_score": None, "reasons": []})
+        self.assertEqual(result, {"status": "analyzed", "level": "unsafe", "unsafe": True, "threats": ["MALWARE"], "trust_score": None, "reasons": []})
         self.assertEqual(call.call_args.args, ("check_url_safety", {"url": "https://x.test/"}))
 
     def test_oldest_shape_flattens_threat_objects(self):
@@ -59,8 +59,19 @@ class CheckUrlSafetyNormalisation(unittest.TestCase):
     def test_not_analyzed_is_not_unsafe(self):
         result, _ = self.call({"isSafe": None, "status": "not_analyzed", "threats": [], "trustScore": None, "reasons": []})
         self.assertEqual(result["status"], "not_analyzed")
+        self.assertIsNone(result["level"])
         self.assertFalse(result["unsafe"])
         self.assertEqual(result["threats"], [])
+
+    def test_level_is_read_or_derived(self):
+        result, _ = self.call({"isSafe": True, "level": "warning", "threats": ["MEDIUM_TRUST_SCORE"], "trustScore": 36})
+        self.assertEqual(result["level"], "warning")
+        self.assertFalse(result["unsafe"])
+        self.assertEqual(result["threats"], ["MEDIUM_TRUST_SCORE"])
+        result, _ = self.call({"isSafe": True, "level": "meh", "threats": []})
+        self.assertEqual(result["level"], "safe")
+        result, _ = self.call({"isSafe": False, "threats": ["MALWARE"]})
+        self.assertEqual(result["level"], "unsafe")
 
     def test_no_data_is_safe(self):
         result, _ = self.call({"isSafe": True, "status": "no_data", "threats": []})
@@ -85,10 +96,12 @@ class CheckUrlSafetyNormalisation(unittest.TestCase):
                 mcp_client.check_url_safety("https://x.test/")
 
 
-ANALYZED_SAFE = {"status": "analyzed", "unsafe": False, "threats": [], "trust_score": 92, "reasons": []}
-ANALYZED_UNSAFE = {"status": "analyzed", "unsafe": True, "threats": ["PHISHING", "LOW_TRUST_SCORE"], "trust_score": 1,
+ANALYZED_SAFE = {"status": "analyzed", "level": "safe", "unsafe": False, "threats": [], "trust_score": 92, "reasons": []}
+ANALYZED_UNSAFE = {"status": "analyzed", "level": "unsafe", "unsafe": True, "threats": ["PHISHING", "LOW_TRUST_SCORE"], "trust_score": 1,
                    "reasons": ["This website has been reported for Phishing by IPQS", "second"]}
-NOT_ANALYZED = {"status": "not_analyzed", "unsafe": False, "threats": [], "trust_score": None, "reasons": []}
+ANALYZED_WARNING = {"status": "analyzed", "level": "warning", "unsafe": False, "threats": ["MEDIUM_TRUST_SCORE"], "trust_score": 36,
+                    "reasons": ["High number of suspicious websites on this IP-address"]}
+NOT_ANALYZED = {"status": "not_analyzed", "level": None, "unsafe": False, "threats": [], "trust_score": None, "reasons": []}
 
 
 class PreToolCall(unittest.TestCase):
@@ -96,13 +109,29 @@ class PreToolCall(unittest.TestCase):
         self.token = mock.patch.object(config, "api_token", return_value="tok")
         self.token.start()
         self.addCleanup(self.token.stop)
+        hooks._url_warnings.clear()
 
-    def run_hook(self, verdicts, **over):
+    def run_hook(self, verdicts, tool_name="browser_navigate", args=None, **over):
         """verdicts: sequence returned by successive check_url_safety calls."""
         with mock.patch.object(config, "setting", side_effect=settings(**over)), \
              mock.patch.object(mcp_client, "check_url_safety", side_effect=list(verdicts)) as check:
-            result = hooks.pre_tool_call("browser_navigate", {"url": "https://x.test/"})
+            result = hooks.pre_tool_call(tool_name, args if args is not None else {"url": "https://x.test/"})
         return result, check
+
+    def test_warning_url_allows_and_is_remembered(self):
+        result, check = self.run_hook([ANALYZED_WARNING])
+        self.assertIsNone(result)
+        self.assertEqual(check.call_count, 1)
+        note = hooks._url_warnings["https://x.test/"]
+        self.assertIn("[AGENT LOOKER URL SAFETY] https://x.test/ rated WARNING (trust score 36/100)", note)
+        self.assertIn("do not enter credentials", note)
+        self.assertIn("High number of suspicious websites on this IP-address", note)
+
+    def test_warning_plus_unsafe_still_blocks(self):
+        result, _ = self.run_hook([ANALYZED_WARNING, ANALYZED_UNSAFE], tool_name="web_extract",
+                                  args={"urls": ["https://x.test/", "https://bad.test/"]})
+        self.assertEqual(result["action"], "block")
+        self.assertIn("https://bad.test/ [PHISHING, LOW_TRUST_SCORE]", result["message"])
 
     def test_safe_url_allows_with_one_call(self):
         result, check = self.run_hook([ANALYZED_SAFE])
@@ -157,6 +186,46 @@ class PreToolCall(unittest.TestCase):
              mock.patch.object(mcp_client, "check_url_safety", side_effect=mcp_client.AgentLookerError("boom")):
             result = hooks.pre_tool_call("browser_navigate", {"url": "https://x.test/"})
             self.assertEqual(result["action"], "block")
+
+
+class TransformToolResultUrlWarning(unittest.TestCase):
+    """The WARNING note recorded by pre_tool_call is prepended once to the web_extract result."""
+
+    ARGS = {"urls": ["https://x.test/"]}
+
+    def setUp(self):
+        hooks._url_warnings.clear()
+        hooks._url_warnings["https://x.test/"] = "[AGENT LOOKER URL SAFETY] https://x.test/ rated WARNING"
+        self.token = mock.patch.object(config, "api_token", return_value="tok")
+        self.token.start()
+        self.addCleanup(self.token.stop)
+
+    def transform(self, text_verdict, **over):
+        with mock.patch.object(config, "setting", side_effect=settings(**over)), \
+             mock.patch.object(mcp_client, "check_text_safety", return_value=text_verdict):
+            return hooks.transform_tool_result("web_extract", self.ARGS, "page body")
+
+    def test_prepended_when_text_is_allowed_and_then_consumed(self):
+        out = self.transform({"action": "ALLOW"})
+        self.assertEqual(out, "[AGENT LOOKER URL SAFETY] https://x.test/ rated WARNING\n\npage body")
+        self.assertNotIn("https://x.test/", hooks._url_warnings)
+        self.assertIsNone(self.transform({"action": "ALLOW"}))  # second call: nothing left to add
+
+    def test_prepended_above_the_content_warning_when_text_is_flagged(self):
+        out = self.transform({"action": "FLAG", "categories": [{"name": "pii", "detected": True}]})
+        self.assertTrue(out.startswith("[AGENT LOOKER URL SAFETY] https://x.test/ rated WARNING\n\n[AGENT LOOKER CONTENT SAFETY]"))
+        self.assertTrue(out.endswith("\n\npage body"))
+
+    def test_prepended_even_when_text_check_is_off(self):
+        out = self.transform({"action": "ALLOW"}, check_text=False)
+        self.assertEqual(out, "[AGENT LOOKER URL SAFETY] https://x.test/ rated WARNING\n\npage body")
+
+    def test_other_urls_are_untouched(self):
+        with mock.patch.object(config, "setting", side_effect=settings()), \
+             mock.patch.object(mcp_client, "check_text_safety", return_value={"action": "ALLOW"}):
+            out = hooks.transform_tool_result("web_extract", {"urls": ["https://other.test/"]}, "page body")
+        self.assertIsNone(out)
+        self.assertIn("https://x.test/", hooks._url_warnings)
 
 
 if __name__ == "__main__":

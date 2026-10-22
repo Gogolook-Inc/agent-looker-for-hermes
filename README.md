@@ -10,7 +10,7 @@ A native [Hermes Agent](https://hermes-agent.nousresearch.com/) plugin that prot
 
 | Hook | Tools | What happens |
 |---|---|---|
-| `pre_tool_call` | `web_extract`, `browser_navigate` | Every URL is sent to `check_url_safety`. Unsafe URLs block the call; the model is told the threat categories and the first reason. URLs not yet in the trust cache are analysed in full automatically (10–25 s) unless `url_auto_deep_scan` is off. |
+| `pre_tool_call` | `web_extract`, `browser_navigate` | Every URL is sent to `check_url_safety`. Unsafe URLs block the call; the model is told the threat categories and the first reason. A WARNING URL (low trust score, no threat reports) is allowed and an `[AGENT LOOKER URL SAFETY]` caution is prepended to the `web_extract` result. URLs not yet in the trust cache are analysed in full automatically (10–25 s) unless `url_auto_deep_scan` is off. |
 | `transform_tool_result` | `web_extract`, `web_search` | The result is sent to `check_text_safety`. FLAG / BLOCK verdicts prepend an `[AGENT LOOKER CONTENT SAFETY]` warning so the model treats the content as data. |
 | `on_session_start` | | Reminds you to sign in when no token is configured. |
 
@@ -29,7 +29,8 @@ A native [Hermes Agent](https://hermes-agent.nousresearch.com/) plugin that prot
 web_extract(urls) / browser_navigate(url)
       |
 pre_tool_call ── check_url_safety ──UNSAFE───> blocked, threat categories + reason returned to the model
-      |                            ──UNKNOWN──> deep_scan (10–25 s) automatically, then UNSAFE / SAFE
+      |                            ──UNKNOWN──> deep_scan (10–25 s) automatically, then UNSAFE / WARNING / SAFE
+      |                            ──WARNING──> tool runs; caution note prepended to the web_extract result
       |                            ──SAFE─────> tool runs
       v
 transform_tool_result ── check_text_safety ──FLAG/BLOCK──> warning prepended to the result

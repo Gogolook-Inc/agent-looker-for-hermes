@@ -1,5 +1,5 @@
 name: agent-looker
-version: "0.2.0"
+version: "0.3.0"
 description: "Agent Looker safety guardrails for Hermes: checks every URL before web_extract / browser_navigate opens it, scans web_extract and web_search results for prompt injection and unsafe content, ships the four Agent Looker skills, and adds `hermes agent-looker login` for device-flow sign-in."
 author: "Gogolook"
 license: GPL-3.0
