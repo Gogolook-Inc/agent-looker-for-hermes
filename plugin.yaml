@@ -1,5 +1,5 @@
 name: agent-looker
-version: "0.1.0"
+version: "0.3.0"
 description: "Agent Looker safety guardrails for Hermes: checks every URL before web_extract / browser_navigate opens it, scans web_extract and web_search results for prompt injection and unsafe content, ships the four Agent Looker skills, and adds `hermes agent-looker login` for device-flow sign-in."
 author: "Gogolook"
 license: GPL-3.0
@@ -29,6 +29,11 @@ config_schema:
     type: bool
     default: true
     label: "Check URLs before web_extract / browser_navigate"
+  url_auto_deep_scan:
+    type: bool
+    default: true
+    label: "Run a full analysis (10-25 s) automatically when a URL is not in the trust cache"
+    description: "URLs the trust database has not analysed yet come back UNKNOWN. On = the hook requests the full analysis itself and waits for the verdict. Off = the tool call is blocked and the model is told it can request the deep scan when it really needs the URL."
   check_text:
     type: bool
     default: true

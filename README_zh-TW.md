@@ -10,7 +10,7 @@
 
 | Hook | 工具 | 行為 |
 |---|---|---|
-| `pre_tool_call` | `web_extract`、`browser_navigate` | 每個 URL 先送 `check_url_safety`。不安全就擋下呼叫，並告訴模型威脅類別。 |
+| `pre_tool_call` | `web_extract`、`browser_navigate` | 每個 URL 先送 `check_url_safety`。不安全就擋下呼叫，並告訴模型威脅類別與原因；警告（信任分數偏低、無通報）放行，但在 `web_extract` 結果最前面加上 `[AGENT LOOKER URL SAFETY]` 提醒；不在信任快取的 URL 自動完整分析（10–25 秒），除非關閉 `url_auto_deep_scan`。 |
 | `transform_tool_result` | `web_extract`、`web_search` | 結果送 `check_text_safety`。FLAG / BLOCK 時在結果最前面加上 `[AGENT LOOKER CONTENT SAFETY]` 警告，讓模型把內容當資料而不是指令。 |
 | `on_session_start` | | 尚未登入時提醒你登入。 |
 
@@ -28,8 +28,10 @@
 ```
 web_extract(urls) / browser_navigate(url)
       |
-pre_tool_call ── check_url_safety ──UNSAFE──> 擋下，威脅類別回給模型
-      |                            ──SAFE────> 工具執行
+pre_tool_call ── check_url_safety ──UNSAFE───> 擋下，威脅類別與原因回給模型
+      |                            ──UNKNOWN──> 自動完整分析（10–25 秒）後再判 UNSAFE / WARNING / SAFE
+      |                            ──WARNING──> 工具執行；web_extract 結果前加提醒
+      |                            ──SAFE─────> 工具執行
       v
 transform_tool_result ── check_text_safety ──FLAG/BLOCK──> 結果前加警告
                                            ──ALLOW───────> 結果不變
@@ -100,6 +102,7 @@ plugin 的設定表單（Capabilities → Plugins → 齒輪）會顯示 endpoin
 |---|---|---|
 | `mcp_url` | `https://api.agentlooker.ai/mcp` | endpoint。`AGENT_LOOKER_MCP_URL` 會覆寫它。 |
 | `check_urls` | `true` | `web_extract` / `browser_navigate` 前的 URL 檢查 |
+| `url_auto_deep_scan` | `true` | URL 不在信任快取（UNKNOWN）時自動做完整分析（10–25 秒）。關閉 = 擋下該次呼叫並告訴模型可自行要求 `deep_scan` |
 | `check_text` | `true` | `web_extract` / `web_search` 結果的內容掃描 |
 | `block_when_unauthenticated` | `true` | 未登入時拒絕網頁工具（關掉 = 警告一次後放行） |
 | `fail_closed` | `false` | Agent Looker 連不上時擋下網頁工具（預設：放行並在 log 警告） |

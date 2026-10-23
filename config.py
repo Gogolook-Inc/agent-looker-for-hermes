@@ -32,6 +32,7 @@ _CTX: Any = None
 _DEFAULTS = {
     "mcp_url": DEFAULT_MCP_URL,
     "check_urls": True,
+    "url_auto_deep_scan": True,
     "check_text": True,
     "block_when_unauthenticated": True,
     "fail_closed": False,
